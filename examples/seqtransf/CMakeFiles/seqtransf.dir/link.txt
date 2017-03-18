@@ -1,0 +1,1 @@
+/home/francisco/mpich-install/bin/mpic++   -Wall -Wextra -Wno-deprecated -Werror -pedantic -pedantic-errors    CMakeFiles/seqtransf.dir/main.cpp.o  -o ../../seqtransf -rdynamic 

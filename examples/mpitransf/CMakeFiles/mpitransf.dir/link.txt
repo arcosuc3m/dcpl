@@ -1,0 +1,1 @@
+/home/francisco/mpich-install/bin/mpic++   -Wall -Wextra -Wno-deprecated -Werror -pedantic -pedantic-errors    CMakeFiles/mpitransf.dir/main.cpp.o  -o ../../mpitransf -rdynamic 
