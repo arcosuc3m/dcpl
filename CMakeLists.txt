@@ -18,3 +18,4 @@ endif()
 
 #Process subdirectories
 add_subdirectory(examples)
+add_subdirectory(test)

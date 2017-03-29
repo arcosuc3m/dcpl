@@ -41,7 +41,7 @@ int main() {
 	//crear el tipo de datos hindexed (diferente por proceso)	
 	MPI_Type_create_indexed_block(1, blocklength, displacements, MPI_INT, &tipo_hindexed);
 	MPI_Type_commit(&tipo_hindexed);
-	printf("[%d]: he creado un tipo contiguo con los datos\n\tlength: %d\n", rango, blocklength);
+	//printf("[%d]: he creado un tipo contiguo con los datos\n\tlength: %d\n", rango, blocklength);
 	//leer del fichero
 	buffer.resize(blocklength);
 	MPI_File_set_view(file_descriptor, 0, MPI_CHAR, tipo_hindexed, "native", MPI_INFO_NULL);
