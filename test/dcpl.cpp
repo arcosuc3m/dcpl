@@ -65,13 +65,13 @@ namespace dcpl{
 						blocklength = (rango != num_proc-1)?amount_per_process:last_length;
 						MPI_Type_create_indexed_block(1, blocklength, dis, TYPE, &res);
 						MPI_Type_commit(&res);
-						this->my_schedule.size = blocklength*sizeof(T);
+						this->my_schedule.size = blocklength;
 						break;
 					case ROBIN:
 						contador = rango*my_schedule.rr_param;
 						while(contador < elements){
 							int length = (elements - contador < my_schedule.rr_param) ? (elements - contador) :( my_schedule.rr_param);
-							my_schedule.size += length*sizeof(T);
+							my_schedule.size += length;
 							blocklengths.push_back(length);
 							if(rango == 2) cout << "length: " << length << endl;
 							if(rango == 2) cout << "contador: " <<contador << endl;
@@ -104,9 +104,9 @@ namespace dcpl{
 				MPI_File_open(MPI_COMM_WORLD, path, MPI_MODE_RDONLY, MPI_INFO_NULL, &file_descriptor);
 				MPI_File_get_size(file_descriptor, &file_size);
 				tipo = build_datatype(file_size);
-				contenido.resize(my_schedule.size/sizeof(T));
+				contenido.resize(my_schedule.size);
 				MPI_File_set_view(file_descriptor, 0, MPI_CHAR, tipo, "native", MPI_INFO_NULL);
-				MPI_File_read(file_descriptor, contenido.data(), my_schedule.size, MPI_CHAR, &status);
+				MPI_File_read(file_descriptor, contenido.data(), my_schedule.size, TYPE, &status);
 				usleep(10000*MPI_Comm_rank_wrapper());
 				cout << "=========" << MPI_Comm_rank_wrapper()<< "=========" << endl;
 				for(auto ii : contenido){
