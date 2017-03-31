@@ -122,10 +122,10 @@ namespace dcpl{
 			}
 			void write(const char* path){
 				MPI_File file_descriptor;
-				MPI_Status status;
+				//MPI_Status status;
 				MPI_File_open(MPI_COMM_WORLD, path, MPI_MODE_WRONLY | MPI_MODE_CREATE, MPI_INFO_NULL, &file_descriptor);																
 				MPI_File_set_view(file_descriptor, 0, MPI_CHAR, datatype, "native", MPI_INFO_NULL);
-				MPI_File_write(file_descriptor, contenido.data(), my_schedule.size, CHECK_TYPE(), &status);				
+				MPI_File_write_all_begin(file_descriptor, contenido.data(), my_schedule.size, CHECK_TYPE());				
 			}
 			~DistributedVector(){
 				
