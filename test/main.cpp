@@ -3,7 +3,8 @@
 using namespace std;
 using namespace dcpl;
 int main(){
-	DistributedVector<int> v{ROBIN, 3};
+	DistributedVector<double> v{ROBIN, 1};
 	v.llenar("DATA");
+	v.write("DATA2");
 	return 0;
 }

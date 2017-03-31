@@ -7,10 +7,10 @@
 #include <algorithm>
 #include <iterator>
 #define RUTA "DATA"
-
+#define TYPE double
 using namespace std;
 int main(int argc, char **argv){
-	vector<int> v{};
+	vector<TYPE> v{};
 	struct timespec seed;	
 	if(argc!=2){
 		cout << "./vfg <size>" << endl;
@@ -19,7 +19,7 @@ int main(int argc, char **argv){
 	clock_gettime(CLOCK_REALTIME, &seed);
 	int size = atoi(argv[1]);
 	v.resize(size);
-	srand((unsigned int)seed.tv_nsec);	
+	srand((TYPE)seed.tv_nsec);	
 	auto contador{0};
 	for(auto& ii : v){
 		//int signo = (rand()%2)?-1:1;
@@ -28,7 +28,7 @@ int main(int argc, char **argv){
 		contador++;
 	}
 	ofstream archivo{RUTA, ios::out};
-	archivo.write((char*)v.data(), v.size()*sizeof(int));
+	archivo.write((char*)v.data(), v.size()*sizeof(TYPE));
 	archivo.close();
 	return 0;
 }
