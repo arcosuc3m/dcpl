@@ -248,7 +248,7 @@ namespace dcpl{
 			int emisor = first.getParent().owner(first.getPosition());		//proceso del que leer el dato con el que operaremos
 			int receptor = result.getParent().owner(result.getPosition());	//proceso que operará con el dato fuente
 			if(myRank == 0)cout << "Emisor: " << emisor << " receptor: "<< receptor<< endl;
-			auto argumento = 0; //double o int			
+			auto argumento = first.getParent().contenido[0];
 			if(emisor == receptor && myRank == emisor){	//soy emisor y receptor
 				//operación local en memoria
 				result.getParent().contenido[result.getParent().global_to_local_pos(result.getPosition())] = op(first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
@@ -258,12 +258,12 @@ namespace dcpl{
 			}
 			if(myRank == emisor){				
 				if(myRank == 1 )cout << "empezando envío posición: "<< first.getPosition()<<" a "<< receptor<< endl;
-				MPI_Send(&(first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]), 1, first.getParent().CHECK_TYPE(), receptor, 0, MPI_COMM_WORLD);
+				MPI_Send(&(first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]), 1, first.getParent().CHECK_TYPE(), receptor, 0, MPI_COMM_WORLD);				
 				if(myRank == 1 )cout << "terminado envío posición: "<< first.getPosition()<<" a "<< receptor<< endl;
 			}
 			if(myRank == receptor){
 				if(myRank ==0 )cout << "empezando recepción posición: "<< first.getPosition() <<" de "<< emisor<< endl;
-				MPI_Recv(&argumento, 1, first.getParent().CHECK_TYPE(), emisor, 0, MPI_COMM_WORLD, &status);				
+				MPI_Recv(&argumento, 1, first.getParent().CHECK_TYPE(), emisor, 0, MPI_COMM_WORLD, &status);								
 				result.getParent().contenido[result.getParent().global_to_local_pos(result.getPosition())] = op(argumento);								
 				if(myRank ==0 )cout << "terminado recepción posición: "<< first.getPosition()<<" de "<< emisor<< endl;
 			}
