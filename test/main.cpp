@@ -1,19 +1,25 @@
 #include <iostream>
+#include <algorithm>
 #include "dcpl.cpp"
 using namespace std;
-using namespace dcpl;
 int main(){
-	DistributedVector<double> v{ROBIN, 1};
+	dcpl::DistributedVector<double> v{dcpl::ROBIN, 1};
+	dcpl::DistributedVector<double> v2{dcpl::BLOCK};
 	v.llenar("DATA");
+	v2.llenar("DATA");
+	int aux;
 
-	for(int ii = 0; ii < v.size()/2; ++ii){
-		auto aux = v[ii];
-		v[ii] = v[v.size()-(ii+1)];
-		v[v.size()-(ii+1)] = aux;
+	dcpl::transform(v.begin(), v.end(), v2.begin(), [](double element){return 2*element;});
+	std::vector<double> vlocal{};
+	for(auto ii: v2){
+		vlocal.push_back(ii);
 	}
-
-	for(int ii = 0; ii < v.size(); ++ii){
-		cout << "v[" << ii << "]" << v[ii] << endl;
+	MPI_Comm_rank(MPI_COMM_WORLD, &aux);
+	if(aux == 0){
+		for(auto ii: vlocal){
+			cout << ii << endl;
+		}
 	}
-	return 0;
+	MPI_Barrier(MPI_COMM_WORLD);
+	
 }
