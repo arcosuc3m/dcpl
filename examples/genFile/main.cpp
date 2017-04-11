@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <iterator>
 #define RUTA "DATA"
-#define TYPE double
+#define TYPE int
 using namespace std;
 int main(int argc, char **argv){
 	vector<TYPE> v{};

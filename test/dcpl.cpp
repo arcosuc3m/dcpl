@@ -114,10 +114,17 @@ namespace dcpl{
 				int num_proc = MPI_Comm_size_wrapper();
 				switch(my_schedule.type){					
 					case BLOCK:
-						return (pos - rango*my_schedule.vector_size);
+						return (pos - rango*my_schedule.datatype_size);
 					break;
 					case ROBIN:
-						return (pos/(my_schedule.rr_param*num_proc))*my_schedule.rr_param  + (pos - ((pos/my_schedule.rr_param)*my_schedule.rr_param));
+						//la posición será tan alta como el número de repartos enteros
+						//se le añade la posición que ocupa en el último repartor
+							//esta posición se sabe 
+						int tama_reparto = my_schedule.rr_param*num_proc;
+						int repartos_enteros = pos / tama_reparto;
+						int pos_in_chunk = pos - (repartos_enteros*tama_reparto) - (rango*my_schedule.rr_param);
+						int res = repartos_enteros*my_schedule.rr_param + pos_in_chunk;
+						return res;
 					break;					
 				}
 				return 0;
@@ -199,8 +206,8 @@ namespace dcpl{
 				T& operator*(){
 					return parent[position];
 				}
-				T& operator->(){
-					return parent[position];
+				T* operator->(){
+					return &parent[position];
 				}
 				iterator& operator++(){
 					position++;
@@ -242,37 +249,41 @@ namespace dcpl{
 	template <class iterator, class unaryOperator>
 	void transform(iterator first, iterator last, iterator result, unaryOperator op){
 		auto myRank = MPI_Comm_rank_wrapper();
+		int contador = 0;
 		MPI_Status status;
 		while(first != last){
-			if(myRank == 0)cout << "bucle"<< endl;
+			//MPI_Barrier(MPI_COMM_WORLD);
+			//if(myRank == 0)cout << "bucle"<< endl;
+			//if(myRank == 1)	cout << contador << endl;
 			int emisor = first.getParent().owner(first.getPosition());		//proceso del que leer el dato con el que operaremos
 			int receptor = result.getParent().owner(result.getPosition());	//proceso que operará con el dato fuente
-			if(myRank == 0)cout << "Emisor: " << emisor << " receptor: "<< receptor<< endl;
+			//if(myRank == 0)cout << "Emisor: " << emisor << " receptor: "<< receptor<< endl;
 			auto argumento = first.getParent().contenido[0];
 			if(emisor == receptor && myRank == emisor){	//soy emisor y receptor
 				//operación local en memoria
 				result.getParent().contenido[result.getParent().global_to_local_pos(result.getPosition())] = op(first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
 				result++;
 				first++;
+				contador++;
 				continue;
 			}
 			if(myRank == emisor){				
-				if(myRank == 1 )cout << "empezando envío posición: "<< first.getPosition()<<" a "<< receptor<< endl;
+				//if(myRank == 1 )cout << "empezando envío posición: "<< first.getPosition()<<" a "<< receptor<< endl;
 				MPI_Send(&(first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]), 1, first.getParent().CHECK_TYPE(), receptor, 0, MPI_COMM_WORLD);				
-				if(myRank == 1 )cout << "terminado envío posición: "<< first.getPosition()<<" a "<< receptor<< endl;
+				//if(myRank == 1 )cout << "terminado envío posición: "<< first.getPosition()<<" a "<< receptor<< endl;
 			}
 			if(myRank == receptor){
-				if(myRank ==0 )cout << "empezando recepción posición: "<< first.getPosition() <<" de "<< emisor<< endl;
+				//if(myRank ==0 )cout << "empezando recepción posición: "<< first.getPosition() <<" de "<< emisor<< endl;
 				MPI_Recv(&argumento, 1, first.getParent().CHECK_TYPE(), emisor, 0, MPI_COMM_WORLD, &status);								
 				result.getParent().contenido[result.getParent().global_to_local_pos(result.getPosition())] = op(argumento);								
-				if(myRank ==0 )cout << "terminado recepción posición: "<< first.getPosition()<<" de "<< emisor<< endl;
+				//if(myRank ==0 )cout << "terminado recepción posición: "<< first.getPosition()<<" de "<< emisor<< endl;
 			}
 			//cout << "hola2" << endl;
 			++result;
 			++first;
+			contador++;
 		}
-		if(myRank == 0)cout << "mepiro" << endl;
-		MPI_Barrier(MPI_COMM_WORLD);
+		//cout << "proceso ["<< myRank <<"] ha terminado" << endl;
 	}
 
 }//fin namespace
