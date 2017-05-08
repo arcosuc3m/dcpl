@@ -8,17 +8,7 @@
 #include <functional> //std::function
 using namespace std;
 
-static int MPI_Comm_size_wrapper(){
-	int aux;
-	fflush(NULL);
-	MPI_Comm_size(MPI_COMM_WORLD, &aux);
-	return aux;
-}
-static int MPI_Comm_rank_wrapper(){
-	int aux;
-	MPI_Comm_rank(MPI_COMM_WORLD, &aux);	
-	return aux;
-}
+
 namespace dcpl{
 	/********TIPOS********/
 	typedef char schedule_type;
@@ -31,9 +21,32 @@ namespace dcpl{
 		int datatype_size = 0;		//size of the dataType which symbolizes the splitting in file (in elements of tipe double or int)
 		int vector_size = 0;
 	} schedule_data; //datos del reparto
+	typedef struct{
+		int rank = 0;
+		int size = 0;		
+	} MPI_context;
+	MPI_context my_context;
 
-	int noop = MPI_Init(nullptr, nullptr); //TODO: preguntar como hacer esto con argc y argv
+
+	class inicializador{
+		int rank = 0;
+		int size = 0;
+	public:
+		inicializador(int argc, char** argv){
+			MPI_Init(&argc, &argv);
+			MPI_Comm_rank(MPI_COMM_WORLD, &(my_context.rank));
+			MPI_Comm_size(MPI_COMM_WORLD, &(my_context.size));
+		};
+		~inicializador(){
+			MPI_Finalize();
+		};		
+	};
+
+
+	
 	/*****************************/
+
+
 
 	/********VECTOR********/
 	template <typename T>
@@ -49,11 +62,9 @@ namespace dcpl{
 				@param size -> size (in bytes) of the file U are reading.
 			*/
 			void build_datatype(int size){ //allow us to build a MPI datatype
-				MPI_Datatype res;
-				int num_proc{MPI_Comm_size_wrapper()};
-				int rango{MPI_Comm_rank_wrapper()};
+				MPI_Datatype res;				
 				my_schedule.vector_size = size/sizeof(T);
-				int amount_per_process = my_schedule.vector_size/num_proc;
+				int amount_per_process = my_schedule.vector_size/my_context.size;
 				int blocklength, dis[1], last_length;
 				int contador = 0;
 				vector<int> blocklengths{};
@@ -61,23 +72,23 @@ namespace dcpl{
 				switch(my_schedule.type){
 					case BLOCK:					
 						//displacement = rank*elems for process 0
-						dis[0] = rango*amount_per_process;						
-						last_length = amount_per_process+my_schedule.vector_size%num_proc;
-						blocklength = (rango != num_proc-1)?amount_per_process:last_length;
+						dis[0] = my_context.rank*amount_per_process;						
+						last_length = amount_per_process+my_schedule.vector_size%my_context.size;
+						blocklength = (my_context.rank != my_context.size-1)?amount_per_process:last_length;
 						MPI_Type_create_indexed_block(1, blocklength, dis, CHECK_TYPE(), &res);
 						MPI_Type_commit(&res);
 						this->my_schedule.datatype_size = blocklength;
 						break;
 					case ROBIN:
 						//auto init = chrono::system_clock::now();
-						contador = rango*my_schedule.rr_param;
+						contador = my_context.rank*my_schedule.rr_param;
 						//prueba rendimiento 200.000.000 rodajas = 3683 ms por proceso. (se supone paralelo)
 						while(contador < my_schedule.vector_size){
 							int length = (my_schedule.vector_size - contador < my_schedule.rr_param) ? (my_schedule.vector_size - contador) :( my_schedule.rr_param);
 							my_schedule.datatype_size += length;
 							blocklengths.push_back(length);
 							displacements.push_back(contador*sizeof(T));
-							contador += (my_schedule.rr_param*num_proc);							
+							contador += (my_schedule.rr_param*my_context.size);							
 						}
 						//auto fin = chrono::system_clock::now();
 						/*if(rango == 0){
@@ -97,32 +108,29 @@ namespace dcpl{
 			static inline MPI_Datatype CHECK_TYPE(){
 				return (std::is_same<int, T>::value )?(MPI_INT):MPI_DOUBLE;
 			}
-			int owner(int pos){
-				int num_proc = MPI_Comm_size_wrapper();
+			int owner(int pos){				
 				switch(my_schedule.type){
 					case BLOCK:
-					return (pos/(my_schedule.vector_size/num_proc) >= num_proc)? num_proc-1 : pos/(my_schedule.vector_size/num_proc);
+					return (pos/(my_schedule.vector_size/my_context.size) >= my_context.size)? my_context.size-1 : pos/(my_schedule.vector_size/my_context.size);
 					break;
 					case ROBIN:
-					return (pos/my_schedule.rr_param)%num_proc;
+					return (pos/my_schedule.rr_param)%my_context.size;
 					break;
 				}
 				return 0;
 			}
-			int global_to_local_pos(int pos){
-				int rango = MPI_Comm_rank_wrapper();
-				int num_proc = MPI_Comm_size_wrapper();
+			int global_to_local_pos(int pos){			
 				switch(my_schedule.type){					
 					case BLOCK:
-						return (pos - rango*my_schedule.datatype_size);
+						return (pos - my_context.rank*my_schedule.datatype_size);
 					break;
 					case ROBIN:
 						//la posición será tan alta como el número de repartos enteros
 						//se le añade la posición que ocupa en el último repartor
 							//esta posición se sabe 
-						int tama_reparto = my_schedule.rr_param*num_proc;
+						int tama_reparto = my_schedule.rr_param*my_context.size;
 						int repartos_enteros = pos / tama_reparto;
-						int pos_in_chunk = pos - (repartos_enteros*tama_reparto) - (rango*my_schedule.rr_param);
+						int pos_in_chunk = pos - (repartos_enteros*tama_reparto) - (my_context.rank*my_schedule.rr_param);
 						int res = repartos_enteros*my_schedule.rr_param + pos_in_chunk;
 						return res;
 					break;					
@@ -138,8 +146,8 @@ namespace dcpl{
 			};
 			T& operator[](int pos){						
 				int local_pos = global_to_local_pos(pos);
-				if(owner(pos) == MPI_Comm_rank_wrapper()){ //soy el que almacena el proceso
-					MPI_Bcast(&contenido[local_pos], 1, CHECK_TYPE(), MPI_Comm_rank_wrapper(), MPI_COMM_WORLD);					
+				if(owner(pos) == my_context.rank){ //soy el que almacena el proceso
+					MPI_Bcast(&contenido[local_pos], 1, CHECK_TYPE(), my_context.rank, MPI_COMM_WORLD);					
 					return contenido[local_pos];
 				}else{
 					MPI_Bcast(&(this->dummy), 1, CHECK_TYPE(), owner(pos), MPI_COMM_WORLD);
@@ -165,7 +173,7 @@ namespace dcpl{
 				contenido.resize(my_schedule.datatype_size);
 				MPI_File_set_view(file_descriptor, 0, MPI_CHAR, datatype, "native", MPI_INFO_NULL);
 				MPI_File_read(file_descriptor, contenido.data(), my_schedule.datatype_size, CHECK_TYPE(), &status);
-				usleep(10000*MPI_Comm_rank_wrapper());
+				usleep(10000*my_context.rank);
 				/*cout << "=========" << MPI_Comm_rank_wrapper()<< "=========" << endl;
 				for(auto ii : contenido){
 					cout << ii << endl;
@@ -186,6 +194,9 @@ namespace dcpl{
 			//funciones algoritmos
 			template <class iterator, class unaryOperator>
 			friend void transform(iterator first, iterator last, iterator result, unaryOperator op);
+			template<class ForwardIt, class U, class BinaryOp>
+			friend U reduce(ForwardIt first, ForwardIt last, U init, BinaryOp binary_op);
+			
 
 			~DistributedVector(){
 			};
@@ -247,19 +258,14 @@ namespace dcpl{
 
 	/**********FUNCIONES**********/	
 	template <class iterator, class unaryOperator>
-	void transform(iterator first, iterator last, iterator result, unaryOperator op){
-		auto myRank = MPI_Comm_rank_wrapper();
+	void transform(iterator first, iterator last, iterator result, unaryOperator op){		
 		int contador = 0;
 		MPI_Status status;
-		while(first != last){
-			//MPI_Barrier(MPI_COMM_WORLD);
-			//if(myRank == 0)cout << "bucle"<< endl;
-			//if(myRank == 1)	cout << contador << endl;
+		while(first != last){			
 			int emisor = first.getParent().owner(first.getPosition());		//proceso del que leer el dato con el que operaremos
-			int receptor = result.getParent().owner(result.getPosition());	//proceso que operará con el dato fuente
-			//if(myRank == 0)cout << "Emisor: " << emisor << " receptor: "<< receptor<< endl;
+			int receptor = result.getParent().owner(result.getPosition());	//proceso que operará con el dato fuente			
 			auto argumento = first.getParent().contenido[0];
-			if(emisor == receptor && myRank == emisor){	//soy emisor y receptor
+			if(emisor == receptor && my_context.rank == emisor){	//soy emisor y receptor
 				//operación local en memoria
 				result.getParent().contenido[result.getParent().global_to_local_pos(result.getPosition())] = op(first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
 				result++;
@@ -267,24 +273,46 @@ namespace dcpl{
 				contador++;
 				continue;
 			}
-			if(myRank == emisor){				
-				//if(myRank == 1 )cout << "empezando envío posición: "<< first.getPosition()<<" a "<< receptor<< endl;
+			if(my_context.rank == emisor){				
 				MPI_Send(&(first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]), 1, first.getParent().CHECK_TYPE(), receptor, 0, MPI_COMM_WORLD);				
-				//if(myRank == 1 )cout << "terminado envío posición: "<< first.getPosition()<<" a "<< receptor<< endl;
 			}
-			if(myRank == receptor){
-				//if(myRank ==0 )cout << "empezando recepción posición: "<< first.getPosition() <<" de "<< emisor<< endl;
+			if(my_context.rank == receptor){
 				MPI_Recv(&argumento, 1, first.getParent().CHECK_TYPE(), emisor, 0, MPI_COMM_WORLD, &status);								
 				result.getParent().contenido[result.getParent().global_to_local_pos(result.getPosition())] = op(argumento);								
-				//if(myRank ==0 )cout << "terminado recepción posición: "<< first.getPosition()<<" de "<< emisor<< endl;
 			}
-			//cout << "hola2" << endl;
 			++result;
 			++first;
 			contador++;
 		}
-		//cout << "proceso ["<< myRank <<"] ha terminado" << endl;
 	}
+	template<class ForwardIt, class U, class Binary_op>
+	U reduce(ForwardIt first, ForwardIt last, U init, Binary_op binary_op){		
+		auto partial = init;
+		U result;
+		//MPI_Op op;
+		for(;first!=last; first++){
+			if(first.getParent().owner(first.getPosition()) == my_context.rank)
+				partial = binary_op(partial, first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
+		}
+		std::vector<U> partials{};
+		partials.resize(my_context.size);
+		//mando mi dato a todos
+		MPI_Bcast(&partial, 1, first.getParent().CHECK_TYPE(), my_context.rank, MPI_COMM_WORLD);
+		for(unsigned int ii = 0; ii < partials.size();++ii){
+			if((unsigned int)my_context.rank != ii)MPI_Bcast(&partials[ii], 1, first.getParent().CHECK_TYPE(), ii, MPI_COMM_WORLD);
+		}
+		partials[my_context.rank] = partial;
+		if(my_context.rank == 0){
+			for(auto ii:partials) cout << ii << endl;
+		}
+		if(my_context.size == 1) return partial;
+		result = binary_op(partials[0], partials[1]);
+		for(unsigned int  ii = 2; ii < partials.size(); ++ii){
+			result = binary_op(result, partials[ii]);
+		}
+		return result;
+	}
+
 
 }//fin namespace
 
