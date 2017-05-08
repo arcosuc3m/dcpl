@@ -2,10 +2,12 @@
 #include <vector>	//std::vector
 #include <typeinfo>	//typeid
 #include <iostream>	//iostream
+#include <fstream>	//iostream
 #include <unistd.h>	//usleep
 #include <iterator>	//iterator tag
 #include <chrono>	//medir tiempo
 #include <functional> //std::function
+#include <string.h> //memcpy
 using namespace std;
 
 
@@ -21,31 +23,34 @@ namespace dcpl{
 		int datatype_size = 0;		//size of the dataType which symbolizes the splitting in file (in elements of tipe double or int)
 		int vector_size = 0;
 	} schedule_data; //datos del reparto
+
 	typedef struct{
 		int rank = 0;
 		int size = 0;		
 	} MPI_context;
 	MPI_context my_context;
 
+	ostream *coutp = new ostream(nullptr);
+	ostream& cout = *coutp;
+
 
 	class inicializador{
 		int rank = 0;
 		int size = 0;
 	public:
-		inicializador(int argc, char** argv){
+		inicializador(int argc, char** argv){			
 			MPI_Init(&argc, &argv);
 			MPI_Comm_rank(MPI_COMM_WORLD, &(my_context.rank));
 			MPI_Comm_size(MPI_COMM_WORLD, &(my_context.size));
+			if(my_context.rank == 0)memcpy(&cout, &std::cout, sizeof(std::cout));
 		};
 		~inicializador(){
+			//delete coutp;
 			MPI_Finalize();
 		};		
 	};
 
-
-	
 	/*****************************/
-
 
 
 	/********VECTOR********/
@@ -267,7 +272,9 @@ namespace dcpl{
 			auto argumento = first.getParent().contenido[0];
 			if(emisor == receptor && my_context.rank == emisor){	//soy emisor y receptor
 				//operación local en memoria
-				result.getParent().contenido[result.getParent().global_to_local_pos(result.getPosition())] = op(first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
+				result.getParent().contenido[result.getParent().global_to_local_pos(result.getPosition())] =
+				 op(first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
+
 				result++;
 				first++;
 				contador++;
@@ -287,32 +294,46 @@ namespace dcpl{
 	}
 	template<class ForwardIt, class U, class Binary_op>
 	U reduce(ForwardIt first, ForwardIt last, U init, Binary_op binary_op){		
-		auto partial = init;
+		typedef struct{
+			bool flag;
+			U data;
+		}flagged_data;
+		flagged_data my_partial;		
+		bool primer = true;		
 		U result;
 		//MPI_Op op;
-		for(;first!=last; first++){
-			if(first.getParent().owner(first.getPosition()) == my_context.rank)
-				partial = binary_op(partial, first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
+		for(;first!=last; first++){			
+			if(first.getParent().owner(first.getPosition()) == my_context.rank){
+				if(primer){
+					my_partial.data = first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())];
+					my_partial.flag = true;
+					primer = false;
+					continue;
+				}
+				my_partial.data = binary_op(my_partial.data, first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
+			}
 		}
-		std::vector<U> partials{};
+		
+		//En este punto, todos han calculado su reduce parcial sin tener en cuenta init.
+		//puede haber procesos que no tengan un dato válido (no hayan hecho cálculos)
+		//mandamos el dato e información sobre si es válido o no.
+		std::vector<flagged_data> partials{};
 		partials.resize(my_context.size);
 		//mando mi dato a todos
-		MPI_Bcast(&partial, 1, first.getParent().CHECK_TYPE(), my_context.rank, MPI_COMM_WORLD);
+		MPI_Bcast(&my_partial, sizeof(flagged_data), MPI_CHAR, my_context.rank, MPI_COMM_WORLD);
 		for(unsigned int ii = 0; ii < partials.size();++ii){
-			if((unsigned int)my_context.rank != ii)MPI_Bcast(&partials[ii], 1, first.getParent().CHECK_TYPE(), ii, MPI_COMM_WORLD);
+			if((unsigned int)my_context.rank != ii)MPI_Bcast(&partials[ii], sizeof(flagged_data), MPI_CHAR, ii, MPI_COMM_WORLD);
 		}
-		partials[my_context.rank] = partial;
-		if(my_context.rank == 0){
-			for(auto ii:partials) cout << ii << endl;
-		}
-		if(my_context.size == 1) return partial;
-		result = binary_op(partials[0], partials[1]);
-		for(unsigned int  ii = 2; ii < partials.size(); ++ii){
-			result = binary_op(result, partials[ii]);
-		}
+		partials[my_context.rank] = my_partial;
+		
+		//for(auto ii:partials) cout << ii.data << endl;
+		
+		result = init;		
+		for(auto ii:partials){
+			if(ii.flag) result = binary_op(result, ii.data);
+		}		
 		return result;
 	}
 
 
 }//fin namespace
-
