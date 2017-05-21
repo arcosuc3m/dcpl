@@ -54,19 +54,23 @@ namespace dcpl{
 			//delete coutp;
 			end = chrono::system_clock::now();
 			//escribir el tiempo en un archivo: por ej. ./performance.info
-			vector <double> tiempos{};
+			vector <int> tiempos{};
 			tiempos.resize(my_context.size);
 			tiempos[my_context.rank] = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
-			std::cout << "Adiós[ " << my_context.rank << "]" << endl;
+			//std::cout << "Adiós[ " << my_context.rank << "]" << endl;
 			for(int ii = 0; ii < my_context.size; ii++){
-				MPI_Bcast(&tiempos[ii], 1, MPI_DOUBLE, ii, MPI_COMM_WORLD);
+				MPI_Bcast(&tiempos[ii], 1, MPI_INT, ii, MPI_COMM_WORLD);
 			}
-			MPI_File_open(MPI_COMM_WORLD, PER_INFO_PATH.c_str(), MPI_MODE_WRONLY|MPI_MODE_CREATE, MPI_INFO_NULL, &fileper);
+			MPI_File_open(MPI_COMM_WORLD, PER_INFO_PATH.c_str(), MPI_MODE_WRONLY|MPI_MODE_CREATE|MPI_MODE_UNIQUE_OPEN|MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fileper);
+			MPI_File_close(&fileper);
+			MPI_File_open(MPI_COMM_WORLD, PER_INFO_PATH.c_str(), MPI_MODE_WRONLY|MPI_MODE_CREATE|MPI_MODE_UNIQUE_OPEN, MPI_INFO_NULL, &fileper);
 			string aux {};
 			for(auto ii:tiempos){
 				aux = aux + std::to_string(ii)+"\n";
 			}
-			MPI_File_write_all_begin(fileper, aux.c_str(), aux.size()+1, MPI_CHAR);
+			MPI_File_write_all_begin(fileper, aux.c_str(), aux.size(), MPI_CHAR);
+			MPI_File_close(&fileper);
+			
 			MPI_Finalize();
 		};		
 	};
