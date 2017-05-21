@@ -6,19 +6,24 @@
 #include <unistd.h>	//usleep
 #include <iterator>	//iterator tag
 #include <chrono>	//medir tiempo
-#include <functional> //std::function
+//#include <functional> //std::function
 #include <string.h> //memcpy
 using namespace std;
 
+/*std::vector<int> repartir_inversamente(int total, vector<double> durations){
+	return vector<int>{total};
+}*/
 
 namespace dcpl{
 	/********TIPOS********/
 	typedef char schedule_type;
-	const schedule_type BLOCK = 0, ROBIN = 1;	//tipos de reparto
+	const schedule_type BLOCK = 0, ROBIN = 1, BENCHMARK = 2, OPTIMIZED = 3, AD_HOC=4;	//tipos de reparto
+	const string PER_INFO_PATH = "./performance.info";
 
 	typedef struct{
 		int type = 0;		//splitting type (block, round robin...)
 		int rr_param = 1;	//if the type is rr, chunk's size (ignored otherwise)
+		std::vector<int> block_lengths{}; //is splitting type is optimized or ad-hoc, we store here how many elements has each process.
 
 		int datatype_size = 0;		//size of the dataType which symbolizes the splitting in file (in elements of tipe double or int)
 		int vector_size = 0;
@@ -35,17 +40,33 @@ namespace dcpl{
 
 
 	class inicializador{
-		int rank = 0;
-		int size = 0;
+		std::chrono::time_point<std::chrono::system_clock> start, end;
 	public:
-		inicializador(int argc, char** argv){			
+		inicializador(int argc, char** argv){
+			start = chrono::system_clock::now();
 			MPI_Init(&argc, &argv);
 			MPI_Comm_rank(MPI_COMM_WORLD, &(my_context.rank));
 			MPI_Comm_size(MPI_COMM_WORLD, &(my_context.size));
 			if(my_context.rank == 0)memcpy(&cout, &std::cout, sizeof(std::cout));
 		};
 		~inicializador(){
+			MPI_File fileper;
 			//delete coutp;
+			end = chrono::system_clock::now();
+			//escribir el tiempo en un archivo: por ej. ./performance.info
+			vector <double> tiempos{};
+			tiempos.resize(my_context.size);
+			tiempos[my_context.rank] = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
+			std::cout << "Adiós[ " << my_context.rank << "]" << endl;
+			for(int ii = 0; ii < my_context.size; ii++){
+				MPI_Bcast(&tiempos[ii], 1, MPI_DOUBLE, ii, MPI_COMM_WORLD);
+			}
+			MPI_File_open(MPI_COMM_WORLD, PER_INFO_PATH.c_str(), MPI_MODE_WRONLY|MPI_MODE_CREATE, MPI_INFO_NULL, &fileper);
+			string aux {};
+			for(auto ii:tiempos){
+				aux = aux + std::to_string(ii)+"\n";
+			}
+			MPI_File_write_all_begin(fileper, aux.c_str(), aux.size()+1, MPI_CHAR);
 			MPI_Finalize();
 		};		
 	};
@@ -142,13 +163,30 @@ namespace dcpl{
 				}
 				return 0;
 			}
-			DistributedVector(schedule_type tipo){
-				my_schedule.type = tipo;				
+			DistributedVector(schedule_type tipo){//para bloque y benchmark
+				my_schedule.type = tipo;
+				if(tipo == BENCHMARK)
+					my_schedule.type = dcpl::BLOCK;
+				if(tipo == OPTIMIZED){
+					ifstream aux{PER_INFO_PATH};
+					if(!aux.is_open()){
+						throw "No hay información de benchmark";
+					}
+					else{
+						aux.close();
+					}
+				}
 			};
 			DistributedVector(schedule_type tipo, int rr_param){
 				 this->my_schedule.type = tipo;
 				 this->my_schedule.rr_param = rr_param;
 			};
+			DistributedVector (schedule_type tipo, vector<int> blocklengths){
+				this->my_schedule.type = tipo;
+				if(tipo != dcpl::AD_HOC) throw "Tipo de reparto equivocado.";
+				this->my_schedule.blocklengths = blocklengths;
+			}; //para ad-hoc
+
 			T& operator[](int pos){						
 				int local_pos = global_to_local_pos(pos);
 				if(owner(pos) == my_context.rank){ //soy el que almacena el proceso
@@ -168,32 +206,29 @@ namespace dcpl{
 			/*
 				@param path -> path to the file to read
 			*/
-			void llenar(const char* path){
+			void llenar(const char* path, int length){
 				MPI_File file_descriptor;
 				MPI_Offset file_size;
 				MPI_Status status;
 				MPI_File_open(MPI_COMM_WORLD, path, MPI_MODE_RDONLY, MPI_INFO_NULL, &file_descriptor);
 				MPI_File_get_size(file_descriptor, &file_size);
+				file_size = ((unsigned int)file_size > length*sizeof(T)) ? length*sizeof(T) : file_size;
 				build_datatype(file_size);
 				contenido.resize(my_schedule.datatype_size);
 				MPI_File_set_view(file_descriptor, 0, MPI_CHAR, datatype, "native", MPI_INFO_NULL);
 				MPI_File_read(file_descriptor, contenido.data(), my_schedule.datatype_size, CHECK_TYPE(), &status);
-				usleep(10000*my_context.rank);
-				/*cout << "=========" << MPI_Comm_rank_wrapper()<< "=========" << endl;
-				for(auto ii : contenido){
-					cout << ii << endl;
-				}*/
 				MPI_File_close(&file_descriptor);
 				MPI_Barrier(MPI_COMM_WORLD);
 			}
 			/*
 				@param path -> path to the file to write the vector
 			*/
-			void write(const char* path){
+			void write(const char* path, int length){
 				MPI_File file_descriptor;
 				MPI_File_open(MPI_COMM_WORLD, path, MPI_MODE_WRONLY | MPI_MODE_CREATE, MPI_INFO_NULL, &file_descriptor);
 				MPI_File_set_view(file_descriptor, 0, MPI_CHAR, datatype, "native", MPI_INFO_NULL);
-				MPI_File_write_all_begin(file_descriptor, contenido.data(), my_schedule.datatype_size, CHECK_TYPE());
+				length = this->my_schedule.datatype_size < length ? this->my_schedule.datatype_size : length;
+				MPI_File_write_all_begin(file_descriptor, contenido.data(), length, CHECK_TYPE());
 				MPI_File_close(&file_descriptor);
 			}
 			//funciones algoritmos
@@ -259,6 +294,26 @@ namespace dcpl{
 				return res;
 			}
 	}; //fin vector
+	/////ifstream
+
+	class ifstream{
+		string path{};
+	public:
+		ifstream(string _path):path{_path}{};
+		template <class T>
+		ifstream& read(dcpl::DistributedVector<T>& in, int length){			
+			in.llenar((this->path).c_str(), length);
+			return *this;
+		}
+		template <class T>
+		ifstream& write(DistributedVector<T>& in, int length){
+			in.write((this->path).c_str(), length);
+			return *this;
+		}
+
+		~ifstream(){};
+		
+	};
 
 
 	/**********FUNCIONES**********/	
@@ -292,16 +347,19 @@ namespace dcpl{
 			contador++;
 		}
 	}
+	
+
+	
 	template<class ForwardIt, class U, class Binary_op>
 	U reduce(ForwardIt first, ForwardIt last, U init, Binary_op binary_op){		
 		typedef struct{
 			bool flag;
 			U data;
 		}flagged_data;
-		flagged_data my_partial;		
+		flagged_data my_partial;
+
 		bool primer = true;		
-		U result;
-		//MPI_Op op;
+		U result;		
 		for(;first!=last; first++){			
 			if(first.getParent().owner(first.getPosition()) == my_context.rank){
 				if(primer){
@@ -313,8 +371,7 @@ namespace dcpl{
 				my_partial.data = binary_op(my_partial.data, first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
 			}
 		}
-		
-		//En este punto, todos han calculado su reduce parcial sin tener en cuenta init.
+		//En este punto, todos han calculado su reduce parcial sin tener en cuenta init.		
 		//puede haber procesos que no tengan un dato válido (no hayan hecho cálculos)
 		//mandamos el dato e información sobre si es válido o no.
 		std::vector<flagged_data> partials{};
@@ -331,7 +388,7 @@ namespace dcpl{
 		result = init;		
 		for(auto ii:partials){
 			if(ii.flag) result = binary_op(result, ii.data);
-		}		
+		}
 		return result;
 	}
 
