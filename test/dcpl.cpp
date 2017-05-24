@@ -78,10 +78,8 @@ namespace dcpl{
 			MPI_File_open(MPI_COMM_WORLD, PER_INFO_PATH.c_str(), MPI_MODE_WRONLY|MPI_MODE_CREATE|MPI_MODE_UNIQUE_OPEN|MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fileper);
 			MPI_File_close(&fileper);
 			MPI_File_open(MPI_COMM_WORLD, PER_INFO_PATH.c_str(), MPI_MODE_WRONLY|MPI_MODE_CREATE|MPI_MODE_UNIQUE_OPEN, MPI_INFO_NULL, &fileper);
-
 			MPI_File_write_all_begin(fileper, tiempos.data(), tiempos.size(), MPI_INT);
 			MPI_File_close(&fileper);
-			
 			MPI_Finalize();
 		};		
 	};
@@ -170,6 +168,7 @@ namespace dcpl{
 			int owner(int pos){				
 				switch(my_schedule.type){
 					case BLOCK:
+					//dcpl::cout << "OWNER = " << ((pos/(my_schedule.vector_size/my_context.size) >= my_context.size)? my_context.size-1 : pos/(my_schedule.vector_size/my_context.size)) << endl;
 					return (pos/(my_schedule.vector_size/my_context.size) >= my_context.size)? my_context.size-1 : pos/(my_schedule.vector_size/my_context.size);
 					break;
 					case ROBIN:
@@ -192,7 +191,7 @@ namespace dcpl{
 				int tama_reparto, repartos_enteros, pos_in_chunk, res;
 				switch(my_schedule.type){					
 					case BLOCK:
-						return (pos - my_context.rank*my_schedule.datatype_size);
+						return (pos - my_context.rank*(my_schedule.vector_size/my_context.size));
 					break;
 					case ROBIN:
 						//la posición será tan alta como el número de repartos enteros
@@ -266,6 +265,31 @@ namespace dcpl{
 					return this->dummy;
 				}
 			}
+			T get(int pos, int nodo){ //acceso de lectura, sólo se lee valor correcto en el nodo indicado				
+				bool amSender, amReceiver;
+				amSender = owner(pos) == my_context.rank;
+				amReceiver = nodo == my_context.rank;
+				if(amSender && amReceiver){
+					return this->contenido[global_to_local_pos(pos)];
+				}else if(amSender){
+					MPI_Send(&(this->contenido[global_to_local_pos(pos)]), 1, CHECK_TYPE(), nodo, 0, MPI_COMM_WORLD);
+					//std::cout<< "nodo: " << my_context.rank << "sent pos: " << pos <<endl;
+					return 0;
+				}else if(amReceiver){
+					T value;
+					MPI_Status nullStatus;
+					MPI_Recv(&value, 1, CHECK_TYPE(), owner(pos), 0, MPI_COMM_WORLD, &nullStatus);
+					//std::cout<< "nodo: " << my_context.rank << "received pos: " << pos <<endl;
+					return value;
+				}else{
+					return 0;
+				}
+			}
+			void set(int pos, T value){ //acceso de escritura
+				if(!(owner(pos) == my_context.rank)) return;
+				this->contenido[global_to_local_pos(pos)] = value;
+			}
+
 			/*
 				return -> size of vector in elements of type T
 			*/
@@ -308,7 +332,7 @@ namespace dcpl{
 			
 
 			~DistributedVector(){
-				std::cout << "[" <<my_context.rank << "] = " << contenido.size();
+			
 			};
 			//forward_iterator
 			class iterator{
@@ -322,8 +346,7 @@ namespace dcpl{
 				typedef std::forward_iterator_tag iterator_category;
 				typedef int difference_type;
 
-				iterator(DistributedVector& p, int pos):parent{p},position{pos}{
-				};
+				iterator(DistributedVector& p, int pos):parent{p},position{pos}{};
 				T& operator*(){
 					return parent[position];
 				}
@@ -388,9 +411,12 @@ namespace dcpl{
 
 	/**********FUNCIONES**********/	
 	template <class iterator, class unaryOperator>
-	void transform(iterator first, iterator last, iterator result, unaryOperator op){		
-		int contador = 0;
+	void transform(iterator first, iterator last, iterator result, unaryOperator op){				
 		MPI_Status status;
+		if(first == result &&(first == first.getParent().begin()) && (last == first.getParent().end())){ //para el caso trivial
+			std::transform(first.getParent().contenido.begin(), first.getParent().contenido.end(), first.getParent().contenido.begin(), op);
+			return;
+		}
 		while(first != last){			
 			int emisor = first.getParent().owner(first.getPosition());		//proceso del que leer el dato con el que operaremos
 			int receptor = result.getParent().owner(result.getPosition());	//proceso que operará con el dato fuente			
@@ -400,9 +426,8 @@ namespace dcpl{
 				result.getParent().contenido[result.getParent().global_to_local_pos(result.getPosition())] =
 				 op(first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
 
-				result++;
-				first++;
-				contador++;
+				++result;
+				++first;
 				continue;
 			}
 			if(my_context.rank == emisor){				
@@ -413,8 +438,7 @@ namespace dcpl{
 				result.getParent().contenido[result.getParent().global_to_local_pos(result.getPosition())] = op(argumento);								
 			}
 			++result;
-			++first;
-			contador++;
+			++first;			
 		}
 	}
 	
@@ -427,10 +451,13 @@ namespace dcpl{
 			U data;
 		}flagged_data;
 		flagged_data my_partial;
+		if((first.getParent().begin() == first) and (last.getParent().end() == last)){			
+			std::accumulate(first.getParent().contenido.begin(), first.getParent().contenido.end(), init, binary_op);
+		}
 
 		bool primer = true;		
 		U result;		
-		for(;first!=last; first++){			
+		for(;first!=last; ++first){			
 			if(first.getParent().owner(first.getPosition()) == my_context.rank){
 				if(primer){
 					my_partial.data = first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())];
@@ -441,6 +468,8 @@ namespace dcpl{
 				my_partial.data = binary_op(my_partial.data, first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
 			}
 		}
+		
+
 		//En este punto, todos han calculado su reduce parcial sin tener en cuenta init.		
 		//puede haber procesos que no tengan un dato válido (no hayan hecho cálculos)
 		//mandamos el dato e información sobre si es válido o no.
@@ -461,6 +490,5 @@ namespace dcpl{
 		}
 		return result;
 	}
-
 
 }//fin namespace
