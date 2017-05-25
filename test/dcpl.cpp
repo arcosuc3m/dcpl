@@ -8,6 +8,7 @@
 #include <chrono>	//medir tiempo
 #include <numeric> //std::accumulate
 #include <string.h> //memcpy
+#include <functional>
 using namespace std;
 
 std::vector<int> repartir_inversamente(int elementos, vector<int> durations){
@@ -378,11 +379,11 @@ namespace dcpl{
 				~iterator(){};
 				
 			};//fin iterator
-			iterator begin(){
+			iterator begin(){				
 				iterator res {*this, 0};
 				return res;
 			}
-			iterator end(){
+			iterator end(){				
 				iterator res{*this, this->my_schedule.vector_size};
 				return res;
 			}
@@ -441,36 +442,70 @@ namespace dcpl{
 			++first;			
 		}
 	}
-	
+	/*template<class number, typename A, std::function<A(A,A)> O>
+	class interOperator{
+	public:
+		static void addem(number* invec, number* inout, int* length, MPI_Datatype* dtype){
+			for(int ii = 0; ii < *length; ++ii){
+				inout[ii] = (*O)(inout[ii], invec[ii]);
+			}
+		}
+	};*/
 
 	
 	template<class ForwardIt, class U, class Binary_op>
 	U reduce(ForwardIt first, ForwardIt last, U init, Binary_op binary_op){		
-		typedef struct{
-			bool flag;
-			U data;
-		}flagged_data;
-		flagged_data my_partial;
-		if((first.getParent().begin() == first) and (last.getParent().end() == last)){			
-			std::accumulate(first.getParent().contenido.begin(), first.getParent().contenido.end(), init, binary_op);
-		}
-
-		bool primer = true;		
-		U result;		
-		for(;first!=last; ++first){			
-			if(first.getParent().owner(first.getPosition()) == my_context.rank){
-				if(primer){
-					my_partial.data = first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())];
-					my_partial.flag = true;
-					primer = false;
-					continue;
-				}
-				my_partial.data = binary_op(my_partial.data, first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
-			}
-		}
+		static auto _op=binary_op; //para que la clase interna pueda verlo.
+		U my_partial;//mi resultado parcial.
+		bool primer = true;//true si no he hecho cálculos, falso en otro caso.
+		MPI_Op miop;//operación personalizada para usar con MPI_op_create
+		MPI_Comm comm;//nuevo comunicador
 		
 
-		//En este punto, todos han calculado su reduce parcial sin tener en cuenta init.		
+		class interOperator{
+		public:
+			static void addem(U* invec, U* inout, int* length, MPI_Datatype* dtype){
+				*dtype = *dtype;//para evitar unused variable warning
+				for(int ii = 0; ii < *length; ++ii){
+						inout[ii] = (_op(inout[ii], invec[ii]));
+				}
+			}
+		};
+		auto auxPointer = &(interOperator::addem);
+		if(my_context.rank == 0){
+			my_partial = init;
+			primer = false;
+		}
+
+		while(first!=last){					
+			if(first.getParent().owner(first.getPosition()) == my_context.rank){
+				if(primer){
+					my_partial = first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())];					
+					primer = false;
+					++first;
+					continue;
+				}
+				my_partial = binary_op(my_partial, first.getParent().contenido[first.getParent().global_to_local_pos(first.getPosition())]);
+
+			}
+			++first;
+		}
+		U send = my_partial;
+		U receive;
+
+		cout << "my partial data " << my_partial << endl;		
+		MPI_Op_create((MPI_User_function*) auxPointer, 1, &miop);
+		MPI_Comm_split(MPI_COMM_WORLD, primer?MPI_UNDEFINED:1, my_context.rank, &comm); //sólo los procesos con valores válidos van al nuevo comunicador
+		
+		if(comm != MPI_COMM_NULL)
+			MPI_Reduce(&send, &receive, 1, std::is_same<U, int>()?MPI_INT:MPI_DOUBLE, miop, 0, comm);		
+
+		MPI_Bcast(&receive, 1, std::is_same<U, int>()?MPI_INT:MPI_DOUBLE, 0, MPI_COMM_WORLD); //recibo un bcast del 0
+		
+		std::cout << "PROCESO: "<<my_context.rank << " reduce = " << receive << endl;
+		return receive;
+
+		/*//En este punto, todos han calculado su reduce parcial sin tener en cuenta init.		
 		//puede haber procesos que no tengan un dato válido (no hayan hecho cálculos)
 		//mandamos el dato e información sobre si es válido o no.
 		std::vector<flagged_data> partials{};
@@ -488,7 +523,7 @@ namespace dcpl{
 		for(auto ii:partials){
 			if(ii.flag) result = binary_op(result, ii.data);
 		}
-		return result;
+		return result;*/
 	}
 
 }//fin namespace

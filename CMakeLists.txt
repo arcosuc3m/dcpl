@@ -8,7 +8,7 @@ include_directories("${CMAKE_SOURCE_DIR}/include")
 # Build binary directory
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
-set(WARNFLAGS "-Wall -Wextra -Wno-deprecated -Werror -pedantic -pedantic-errors")
+set(WARNFLAGS " -Wall -Wextra -Wno-deprecated -Werror -pedantic -pedantic-errors")
 set(CMAKE_CXX_COMPILER mpic++)
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
 list(APPEND CMAKE_CXX_FLAGS "${WARNFLAGS}")
