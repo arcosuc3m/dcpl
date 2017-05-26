@@ -501,7 +501,8 @@ namespace dcpl{
 			MPI_Reduce(&send, &receive, 1, std::is_same<U, int>()?MPI_INT:MPI_DOUBLE, miop, 0, comm);		
 
 		MPI_Bcast(&receive, 1, std::is_same<U, int>()?MPI_INT:MPI_DOUBLE, 0, MPI_COMM_WORLD); //recibo un bcast del 0
-		
+		if(comm != MPI_COMM_NULL)
+			MPI_Comm_free(&comm);
 		std::cout << "PROCESO: "<<my_context.rank << " reduce = " << receive << endl;
 		return receive;
 
