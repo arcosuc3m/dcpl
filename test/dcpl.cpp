@@ -1,14 +1,20 @@
 #include "mpi.h"
-#include <vector>	//std::vector
-#include <typeinfo>	//typeid
-#include <iostream>	//iostream
-#include <fstream>	//iostream
-#include <unistd.h>	//usleep
-#include <iterator>	//iterator tag
-#include <chrono>	//medir tiempo
-#include <numeric> //std::accumulate
-#include <string.h> //memcpy
+#include <vector>			//std::vector
+#include <map>				//std::map
+#include <typeinfo>			//typeid
+#include <iostream>			//iostream
+#include <fstream>			//iostream
+#include <unistd.h>			//usleep
+#include <iterator>			//iterator tag
+#include <chrono>			//medir tiempo
+#include <numeric>			//std::accumulate
+#include <string.h> 		//memcpy
 #include <functional>
+#include <openssl/md5.h>	//md5
+#include <stdio.h>
+
+#define NODE_NAME_LENGTH 256
+
 using namespace std;
 
 std::vector<int> repartir_inversamente(int elementos, vector<int> durations){
@@ -25,17 +31,20 @@ std::vector<int> repartir_inversamente(int elementos, vector<int> durations){
 	return res;
 }
 
+
+
+
 namespace dcpl{
 	/********TIPOS********/
 	typedef char schedule_type;
 	const schedule_type BLOCK = 0, ROBIN = 1, BENCHMARK = 2, OPTIMIZED = 3, AD_HOC=4;	//tipos de reparto
 	const string PER_INFO_PATH = "./performance.info";
+	
 
 	typedef struct{
 		int type = 0;		//splitting type (block, round robin...)
 		int rr_param = 1;	//if the type is rr, chunk's size (ignored otherwise)
-		std::vector<int> block_lengths{}; //is splitting type is optimized or ad-hoc, we store here how many elements each process has.
-
+		std::vector<int> block_lengths{}; //is splitting type is optimized or ad-hoc, we store here how many elements each process has got..
 		int datatype_size = 0;		//size of the dataType which symbolizes the splitting in file (in elements of tipe double or int)
 		int vector_size = 0;
 	} schedule_data; //datos del reparto
@@ -43,15 +52,30 @@ namespace dcpl{
 	typedef struct{
 		int rank = 0;
 		int size = 0;
-		vector<int> tiempos{};
-	} MPI_context;
-	MPI_context my_context;	//rango y número de procesos
+		//vector<int> tiempos{};
+		std::vector<int> tiempos{};
 
-	bool benchmark_flag = false;	//indica si se debe medir rendimiento.
+	} MPI_context;
+	MPI_context my_context;	//rank, commuicator size & times when measuring performance.
+
+	bool benchmark_flag = false;	//It sais if execution time will be wrotten in a file.
 
 	ostream *coutp = new ostream(nullptr);
 	ostream& cout = *coutp;
 
+	char* node_names_hash(){
+		//get my name (uname -n in shell)
+		auto tuber = popen("uname -n", "r");
+		char* buffer = (char*) calloc(my_context.size, sizeof(char)*NODE_NAME_LENGTH);
+		char* my_string = buffer+NODE_NAME_LENGTH*my_context.rank;			
+		fgets(my_string, NODE_NAME_LENGTH, tuber);		
+		auto nombre_resumen = (const char*) MD5((const unsigned char*)my_string, strlen(my_string)+1, nullptr);
+		memcpy(my_string, nombre_resumen, NODE_NAME_LENGTH);		
+		for(int ii = 0; ii < my_context.size; ++ii){
+			MPI_Bcast(&(buffer[ii*NODE_NAME_LENGTH]), NODE_NAME_LENGTH, MPI_CHAR, ii, MPI_COMM_WORLD);
+		}
+		return buffer;
+	}
 
 	class inicializador{
 		std::chrono::time_point<std::chrono::system_clock> start, end;
@@ -65,22 +89,33 @@ namespace dcpl{
 		};
 		~inicializador(){
 			MPI_File fileper;
+			MPI_Status sta;
 			//delete coutp;
 			if(!benchmark_flag) return;
 			end = chrono::system_clock::now();
-			//escribir el tiempo en un archivo: por ej. ./performance.info
+			char * buffer = node_names_hash();
+
+			//write the execution time for each node in a file.
 			vector <int> tiempos{};
 			tiempos.resize(my_context.size);
 			tiempos[my_context.rank] = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
 			//std::cout << "Adiós[ " << my_context.rank << "]" << endl;
-			for(int ii = 0; ii < my_context.size; ii++){
+			for(int ii = 0; ii < my_context.size; ++ii){
 				MPI_Bcast(&tiempos[ii], 1, MPI_INT, ii, MPI_COMM_WORLD);
 			}
+			//we open the file and close it in order to overwrite existing data (MPI does not have O_TRUNC equivalent)
 			MPI_File_open(MPI_COMM_WORLD, PER_INFO_PATH.c_str(), MPI_MODE_WRONLY|MPI_MODE_CREATE|MPI_MODE_UNIQUE_OPEN|MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fileper);
 			MPI_File_close(&fileper);
+			//open the file
 			MPI_File_open(MPI_COMM_WORLD, PER_INFO_PATH.c_str(), MPI_MODE_WRONLY|MPI_MODE_CREATE|MPI_MODE_UNIQUE_OPEN, MPI_INFO_NULL, &fileper);
-			MPI_File_write_all_begin(fileper, tiempos.data(), tiempos.size(), MPI_INT);
+			int contador = 0;
+			for(auto ii = tiempos.begin(); ii!=tiempos.end(); ++ii){				
+				MPI_File_write_at(fileper, contador*(sizeof(int)+NODE_NAME_LENGTH), &(*ii), 1, MPI_INT, &sta);
+				MPI_File_write_at(fileper, contador*(sizeof(int)+NODE_NAME_LENGTH)+sizeof(int), &buffer[NODE_NAME_LENGTH*contador], NODE_NAME_LENGTH, MPI_CHAR, &sta);
+				++contador;
+			}
 			MPI_File_close(&fileper);
+			free(buffer);
 			MPI_Finalize();
 		};		
 	};
@@ -145,6 +180,7 @@ namespace dcpl{
 						my_schedule.block_lengths = repartir_inversamente(size/sizeof(T), my_context.tiempos);
 						my_schedule.type = AD_HOC;
 					//break; <- comentado intencionadamente
+						/*Se comenta el break proque se utiliza la rutina de creación de un datatype de tipo ad-hoc para crear un vector cuando se elige balanceo de carga*/
 					case AD_HOC:	//sólo necesito ese, benchmark es bloque y optimized es este leyendo los datos en el constructor.
 						my_schedule.vector_size = std::accumulate(my_schedule.block_lengths.begin(), my_schedule.block_lengths.end(), 0);
 						int pos = my_context.rank == 0?0:my_context.rank;
@@ -188,6 +224,10 @@ namespace dcpl{
 				}
 				return 0;
 			}
+			/*
+				@param pos: the position in the conceptual vector
+				@return an integer that says where in the local vector that element is stored
+			*/
 			int global_to_local_pos(int pos){			
 				int tama_reparto, repartos_enteros, pos_in_chunk, res;
 				switch(my_schedule.type){					
@@ -219,6 +259,7 @@ namespace dcpl{
 				}
 				return 0;
 			}
+
 			DistributedVector(schedule_type tipo){//para bloque y benchmark
 				my_schedule.type = tipo;
 				if(tipo == BENCHMARK){					
@@ -231,12 +272,54 @@ namespace dcpl{
 						throw "No hay información de benchmark";
 					}
 					else{
+						char* buffer_file = (char*)calloc( my_context.size, NODE_NAME_LENGTH*sizeof(char));
+						char* buffer_check;
+
 						MPI_File archivo;
-						MPI_Status sta;
-						my_context.tiempos.resize(my_context.size);
-						//TODO leer archivo y calcular cuánto le corresponde a cada proceso.
+						MPI_Status sta;	
 						MPI_File_open(MPI_COMM_WORLD, PER_INFO_PATH.c_str(), MPI_MODE_RDONLY|MPI_MODE_UNIQUE_OPEN, MPI_INFO_NULL, &archivo);
-						MPI_File_read(archivo, my_context.tiempos.data(), my_context.tiempos.size(), MPI_INT, &sta);
+						for(int ii = 0; ii < my_context.size; ++ii){
+							MPI_File_read_at(archivo, ii*(sizeof(int)+NODE_NAME_LENGTH)+sizeof(int), buffer_file+ii*NODE_NAME_LENGTH, NODE_NAME_LENGTH, MPI_CHAR, &sta);
+						}
+						//ya tenemos los resúmenes que hay en el archivo
+						buffer_check = node_names_hash();
+						std::vector<std::vector<char>> file{}, actual{};
+						for(int ii = 0; ii < my_context.size; ++ii){
+							file.push_back(std::vector<char>{buffer_file+ii*NODE_NAME_LENGTH, buffer_file+ii*NODE_NAME_LENGTH+NODE_NAME_LENGTH});
+							actual.push_back(std::vector<char>{buffer_check+ii*NODE_NAME_LENGTH, buffer_check+ii*NODE_NAME_LENGTH+NODE_NAME_LENGTH});
+						}						
+						bool is_per = std::is_permutation(file.begin(), file.end(), actual.begin());
+
+						if(!is_per){
+							cout << "performance.info non consistent, changing to block" << endl;
+							this->my_schedule.type = BLOCK;
+						}
+						vector<int> perm_pattern {};
+						if(is_per && !(file == actual)){
+							for(int ii = 0; ii < my_context.size; ++ii){
+								for (int jj = 0; jj < my_context.size; ++jj){
+									if(actual[jj] == file[ii]){
+										perm_pattern.push_back(jj-ii);
+										break;
+									}
+								}
+							}
+						}
+
+						my_context.tiempos.resize(my_context.size);
+						std::vector<int> tiempos_aux{};
+						tiempos_aux.resize(my_context.size);
+						for(int ii = 0; ii < my_context.size; ++ii){
+							MPI_File_read_at(archivo, ii*(sizeof(int)+NODE_NAME_LENGTH), tiempos_aux.data()+ii, 1, MPI_INT, &sta);
+						}
+						if(perm_pattern.size()!=0){
+							for(int ii = 0; ii < my_context.size; ++ii){
+								my_context.tiempos[ii] = tiempos_aux[ii+perm_pattern[ii]];
+							}
+						}else
+							my_context.tiempos = tiempos_aux;
+						for(auto ii:my_context.tiempos)
+							cout << ii << endl;
 						
 						aux.close();
 					}

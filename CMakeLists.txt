@@ -7,7 +7,7 @@ include_directories("${CMAKE_SOURCE_DIR}/include")
 
 # Build binary directory
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
-
+set(OPENSSL_ROOT_DIR /usr/lib/x86_64-linux-gnu/pkgconfig)
 set(WARNFLAGS " -Wall -Wextra -Wno-deprecated -Werror -pedantic -pedantic-errors")
 set(CMAKE_CXX_COMPILER mpic++)
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
