@@ -290,7 +290,8 @@ namespace dcpl{
 					ifstream aux{PER_INFO_PATH};
 					if(!aux.is_open()){
 						cout << "No existen datos de rendimiento, instanciando vector ["<< this<<"] en modo bloque" << endl;
-						DistributedVector(dcpl::BLOCK);
+						this->my_schedule.type = BLOCK;
+						return;
 					}
 					else{
 						char* buffer_file = (char*)calloc( my_context.size, NODE_NAME_LENGTH*sizeof(char));
