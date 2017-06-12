@@ -12,10 +12,23 @@
 #include <functional>
 #include <openssl/md5.h>	//md5
 #include <stdio.h>
+#include <limits.h>
 
-#define NODE_NAME_LENGTH 256
+#define NODE_NAME_LENGTH 16
+#define DEBUG
+//#define OPTIMIZED_INTERFACE
 
 using namespace std;
+
+inline void debug(std::string message){
+	message = message;
+	#ifdef	DEBUG
+		auto rank{0};
+		MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+		usleep(rank*10000);
+		std::cout<< "["s << rank << "]: " << message << endl;
+	#endif
+}
 
 std::vector<int> repartir_inversamente(int elementos, vector<int> durations){
 	std::vector<double> in{};	
@@ -39,7 +52,6 @@ namespace dcpl{
 	typedef char schedule_type;
 	const schedule_type BLOCK = 0, ROBIN = 1, BENCHMARK = 2, OPTIMIZED = 3, AD_HOC=4;	//tipos de reparto
 	const string PER_INFO_PATH = "./performance.info";
-	
 
 	typedef struct{
 		int type = 0;		//splitting type (block, round robin...)
@@ -84,14 +96,21 @@ namespace dcpl{
 			start = chrono::system_clock::now();
 			MPI_Init(&argc, &argv);
 			MPI_Comm_rank(MPI_COMM_WORLD, &(my_context.rank));
-			MPI_Comm_size(MPI_COMM_WORLD, &(my_context.size));
+			MPI_Comm_size(MPI_COMM_WORLD, &(my_context.size));			
+			debug("INICIALIZADO proceso nº "s+ to_string(my_context.rank)+" y hay "s+to_string(my_context.size)+" procesos."s);
 			if(my_context.rank == 0)memcpy(&cout, &std::cout, sizeof(std::cout));
 		};
 		~inicializador(){
 			MPI_File fileper;
 			MPI_Status sta;
 			//delete coutp;
-			if(!benchmark_flag) return;
+			if(!benchmark_flag){
+				auto error = MPI_Finalize();
+				if(error != MPI_SUCCESS){
+					debug("Error ejecutando MPI_Finalize.");
+				}
+				return;	
+			} 
 			end = chrono::system_clock::now();
 			char * buffer = node_names_hash();
 
@@ -265,11 +284,13 @@ namespace dcpl{
 				if(tipo == BENCHMARK){					
 					my_schedule.type = dcpl::BLOCK;
 					benchmark_flag = true;
+					if(benchmark_flag) debug("Se ha iniciado modo benchmark.");
 				}
 				if(tipo == OPTIMIZED){
 					ifstream aux{PER_INFO_PATH};
 					if(!aux.is_open()){
-						throw "No hay información de benchmark";
+						cout << "No existen datos de rendimiento, instanciando vector ["<< this<<"] en modo bloque" << endl;
+						DistributedVector(dcpl::BLOCK);
 					}
 					else{
 						char* buffer_file = (char*)calloc( my_context.size, NODE_NAME_LENGTH*sizeof(char));
@@ -287,7 +308,12 @@ namespace dcpl{
 						for(int ii = 0; ii < my_context.size; ++ii){
 							file.push_back(std::vector<char>{buffer_file+ii*NODE_NAME_LENGTH, buffer_file+ii*NODE_NAME_LENGTH+NODE_NAME_LENGTH});
 							actual.push_back(std::vector<char>{buffer_check+ii*NODE_NAME_LENGTH, buffer_check+ii*NODE_NAME_LENGTH+NODE_NAME_LENGTH});
-						}						
+						}
+						#ifdef	DEBUG
+							for(auto ii : file){
+								cout << "||"s<< string(ii.begin(), ii.end()) << endl;
+							}
+						#endif
 						bool is_per = std::is_permutation(file.begin(), file.end(), actual.begin());
 
 						if(!is_per){
@@ -324,10 +350,12 @@ namespace dcpl{
 						aux.close();
 					}
 				}
+				debug("Instanciado vector con tipo: "s+to_string(my_schedule.type));
 			};
 			DistributedVector(schedule_type tipo, int rr_param){ //para round robin
 				 this->my_schedule.type = tipo;
 				 this->my_schedule.rr_param = rr_param;
+				 debug("Instanciado vector de tipo: "s+ to_string(my_schedule.type)+" con rodaja: "s+to_string(this->my_schedule.rr_param));
 			};
 			DistributedVector (schedule_type tipo, vector<int> blocklengths){ //para adhoc
 				this->my_schedule.type = tipo;
@@ -335,9 +363,27 @@ namespace dcpl{
 					throw "Error de reparto";
 				}
 				this->my_schedule.block_lengths = blocklengths;
+				#ifdef DEBUG
+				std::string a{"Instanciado vector de tipo: "};
+				a+=to_string(my_schedule.type);
+				a+= "\n"s;
+				for(unsigned int ii = 0; ii < blocklengths.size(); ii++){
+					a+= "blocklength["s+to_string(ii)+"]"s +" = " +to_string(blocklengths[ii]);
+				}
+				debug(a);
+				#endif
 			}; //para ad-hoc
 
-			T& operator[](int pos){						
+			T& operator[](int pos){
+				#ifdef OPTIMIZED_INTERFACE
+				if(owner(pos) != my_context.rank){
+					this->dummy = 0;
+					return this->dummy;
+				}
+				return this->contenido[global_to_local_pos(pos)];
+				#endif
+				#ifndef OPTIMIZED_INTERFACE
+
 				int local_pos = global_to_local_pos(pos);
 				if(owner(pos) == my_context.rank){ //soy el que almacena el proceso
 					//cout << "OPERATOR[]-dueño" << endl;
@@ -348,11 +394,17 @@ namespace dcpl{
 					MPI_Bcast(&(this->dummy), 1, CHECK_TYPE(), owner(pos), MPI_COMM_WORLD);
 					return this->dummy;
 				}
+				#endif
 			}
 			T get(int pos, int nodo){ //acceso de lectura, sólo se lee valor correcto en el nodo indicado				
 				bool amSender, amReceiver;
 				amSender = owner(pos) == my_context.rank;
 				amReceiver = nodo == my_context.rank;
+				if(nodo < 0 ){
+					if (owner(pos) == my_context.rank)
+						return this->contenido[global_to_local_pos(pos)];
+					return 0;
+				}
 				if(amSender && amReceiver){
 					return this->contenido[global_to_local_pos(pos)];
 				}else if(amSender){
@@ -396,21 +448,55 @@ namespace dcpl{
 				MPI_File_read(file_descriptor, contenido.data(), my_schedule.datatype_size, CHECK_TYPE(), &status);
 				MPI_File_close(&file_descriptor);
 				MPI_Barrier(MPI_COMM_WORLD);
+				#ifdef DEBUG
+				auto a = "PROCESO "s+to_string(my_context.rank)+" contiene\n"s;
+				for(uint ii = 0; ii < contenido.size(); ii++){
+					a+=to_string(contenido[ii])+"\n"s;
+				}
+				debug(a);
+				#endif
+				return;
 			}
 			/*
 				@param path -> path to the file to write the vector
 			*/
 			void write(const char* path, int length){
+				debug("Entrando en 	WRITE");
 				MPI_File file_descriptor;
 				MPI_File_open(MPI_COMM_WORLD, path, MPI_MODE_WRONLY | MPI_MODE_CREATE, MPI_INFO_NULL, &file_descriptor);
 				MPI_File_set_view(file_descriptor, 0, MPI_CHAR, datatype, "native", MPI_INFO_NULL);
-				length = this->my_schedule.datatype_size < length ? this->my_schedule.datatype_size : length;
-				MPI_File_write_all_begin(file_descriptor, contenido.data(), length, CHECK_TYPE());
+				length = this->my_schedule.vector_size < length ? this->my_schedule.vector_size : length;
+				--length;
+				switch(this->my_schedule.type){
+					case ROBIN:
+						if(owner(length) == my_context.rank){
+							length = global_to_local_pos(length);
+						}else{
+							while(owner(length) != my_context.rank && length != -1){
+								--length;						
+							}						
+							length = global_to_local_pos(length);
+							if(length <0)length = 0;
+						}
+						break;
+					default: //sólo serína bloque o ad-hoc (benchmark == bloque y optimized == ad-hoc)
+						if(owner(length) < my_context.rank){
+							length = -1;
+						}else if(my_context.rank == owner(length)){
+							length = global_to_local_pos(length);
+						}else{
+							length = my_schedule.datatype_size-1;
+						}
+						break;
+					}
+
+				debug("MPI_File_write_all_begin "s+to_string(length)+" elementos"s);
+				MPI_File_write_all_begin(file_descriptor, contenido.data(), length+1, CHECK_TYPE());
 				MPI_File_close(&file_descriptor);
 			}
 			//funciones algoritmos
 			template <class iterator, class unaryOperator>
-			friend void transform(iterator first, iterator last, iterator result, unaryOperator op);
+			friend iterator transform(iterator first, iterator last, iterator result, unaryOperator op);
 			template<class ForwardIt, class U, class BinaryOp>
 			friend U reduce(ForwardIt first, ForwardIt last, U init, BinaryOp binary_op);
 			
@@ -448,7 +534,7 @@ namespace dcpl{
 					return copy;
 				}
 				bool operator==(iterator other){
-					return this->position == other.position && &(this->parent) == &(other.parent);
+					return (this->position == other.position) && (&(this->parent) == &(other.parent));
 				}
 				bool operator!=(iterator other){
 					return !(*this == other);
@@ -495,12 +581,14 @@ namespace dcpl{
 
 	/**********FUNCIONES**********/	
 	template <class iterator, class unaryOperator>
-	void transform(iterator first, iterator last, iterator result, unaryOperator op){				
+	iterator transform(iterator first, iterator last, iterator result, unaryOperator op){				
 		MPI_Status status;
-		if(first == result &&(first == first.getParent().begin()) && (last == first.getParent().end())){ //para el caso trivial
+		if((first == result) &&(first == first.getParent().begin()) && (last == first.getParent().end())){ //para el caso trivial
+			debug("Haciendo transform simple."s);
 			std::transform(first.getParent().contenido.begin(), first.getParent().contenido.end(), first.getParent().contenido.begin(), op);
-			return;
+			return last;
 		}
+		debug("transform"s);
 		while(first != last){			
 			int emisor = first.getParent().owner(first.getPosition());		//proceso del que leer el dato con el que operaremos
 			int receptor = result.getParent().owner(result.getPosition());	//proceso que operará con el dato fuente			
@@ -524,6 +612,7 @@ namespace dcpl{
 			++result;
 			++first;			
 		}
+		return result;
 	}
 	/*template<class number, typename A, std::function<A(A,A)> O>
 	class interOperator{

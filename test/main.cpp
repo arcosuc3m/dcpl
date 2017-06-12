@@ -3,13 +3,16 @@
 #include "dcpl.cpp"
 
 int mymin (int a, int b){return (a<b)?a:b;}
+int suma (int a){
+	return a+1;
+}
 class clasechunga
 {
 public:
 	clasechunga(){};
 	~clasechunga(){};
-	int operator()(int a, int b){
-		return a+b;
+	int operator()(int a){
+		return a+1;
 	}
 	
 };
@@ -17,15 +20,35 @@ public:
 
 int main(int argc, char** argv){
 	dcpl::inicializador aux{argc, argv};
-	dcpl::DistributedVector<int> v{dcpl::OPTIMIZED};
-	dcpl::cout << "HOLA" << endl;
-	dcpl::ifstream stream{"DATA"};	
-	stream.read(v, 10);
-	dcpl::transform(v.begin(), v.end(), v.begin(), [](int& a){return 1+a;});
-	for(auto ii:v){
-		dcpl::cout << ii << endl;
+	dcpl::ifstream enteros("int.data");
+	dcpl::ifstream doubles("double.data");
+
+	std::vector<dcpl::DistributedVector<int>> VE{};
+
+	std::vector<dcpl::DistributedVector<double>>VD{};
+
+	std::vector<dcpl::ifstream> salidas{};
+	for(int ii = 0; ii < 6; ii++){
+		salidas.push_back(dcpl::ifstream{"salida,"s+to_string(ii)});
 	}
-	auto last = v.begin();
-	std::advance(last, 3);
-	dcpl::cout << "MAIN: " << dcpl::reduce(v.begin(), v.end(), 10, clasechunga{}) << endl;
+	for(int ii = 0; ii < 3; ++ii){
+		VE.push_back(dcpl::DistributedVector<int>{dcpl::OPTIMIZED});
+		enteros.read(VE[ii], 100);
+	}
+
+	for(int ii = 0; ii < 3; ++ii){
+		VD.push_back(dcpl::DistributedVector<double>{dcpl::OPTIMIZED});
+		doubles.read(VD[ii], 100);
+	}
+
+	for(int ii = 0; ii < 3; ++ii){
+		salidas[ii].write(VE[ii], 101);
+	}
+
+	for(int ii = 0; ii < 3; ++ii){
+		salidas[ii+3].write(VD[ii], 101);
+	}
+	
+
+	return EXIT_SUCCESS;
 }

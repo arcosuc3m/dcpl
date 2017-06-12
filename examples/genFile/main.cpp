@@ -6,29 +6,28 @@
 #include <iostream>
 #include <algorithm>
 #include <iterator>
-#define RUTA "DATA"
-#define TYPE int
+
 using namespace std;
-int main(int argc, char **argv){
-	vector<TYPE> v{};
-	struct timespec seed;	
-	if(argc!=2){
-		cout << "./vfg <size>" << endl;
-		exit(-1);
-	}
-	clock_gettime(CLOCK_REALTIME, &seed);
-	int size = atoi(argv[1]);
-	v.resize(size);
-	srand((TYPE)seed.tv_nsec);	
+template <class TYPE>
+void llenar_archivo(int elements, string ruta){
+	vector<TYPE> v{};	
+	v.resize(elements);	
 	auto contador{0};
 	for(auto& ii : v){
-		//int signo = (rand()%2)?-1:1;
-		//ii = rand()*signo;
 		ii = contador;
 		contador++;
 	}
-	ofstream archivo{RUTA, ios::out};
+	ofstream archivo{ruta, ios::out};
 	archivo.write((char*)v.data(), v.size()*sizeof(TYPE));
 	archivo.close();
-	return 0;
+}
+int main(int argc, char **argv){
+	if(argc == 2){
+		llenar_archivo<int>(atoi(argv[1]), "int.data"s);
+	}else if(argc == 3){
+		llenar_archivo<double>(atoi(argv[1]), "double.data"s);
+	}else{
+		cout << "Mal argumento" << endl;
+	}
+	return EXIT_SUCCESS;
 }
