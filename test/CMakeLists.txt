@@ -15,3 +15,5 @@ ADD_EXECUTABLE(io io.cpp)
 TARGET_LINK_LIBRARIES(io crypto)
 
 
+ADD_EXECUTABLE(control control.cpp)
+TARGET_LINK_LIBRARIES(control crypto)
