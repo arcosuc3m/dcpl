@@ -15,7 +15,7 @@
 #include <limits.h>
 
 #define NODE_NAME_LENGTH 16
-#define DEBUG
+#define DEBU
 //#define OPTIMIZED_INTERFACE
 
 using namespace std;
@@ -345,8 +345,8 @@ namespace dcpl{
 							}
 						}else
 							my_context.tiempos = tiempos_aux;
-						for(auto ii:my_context.tiempos)
-							cout << ii << endl;
+						/*for(auto ii:my_context.tiempos)
+							cout << ii << endl;*/
 						
 						aux.close();
 					}
@@ -666,7 +666,7 @@ namespace dcpl{
 		U send = my_partial;
 		U receive;
 
-		cout << "my partial data " << my_partial << endl;		
+		//cout << "my partial data " << my_partial << endl;		
 		MPI_Op_create((MPI_User_function*) auxPointer, 1, &miop);
 		MPI_Comm_split(MPI_COMM_WORLD, primer?MPI_UNDEFINED:1, my_context.rank, &comm); //sólo los procesos con valores válidos van al nuevo comunicador
 		
@@ -676,7 +676,7 @@ namespace dcpl{
 		MPI_Bcast(&receive, 1, std::is_same<U, int>()?MPI_INT:MPI_DOUBLE, 0, MPI_COMM_WORLD); //recibo un bcast del 0
 		if(comm != MPI_COMM_NULL)
 			MPI_Comm_free(&comm);
-		std::cout << "PROCESO: "<<my_context.rank << " reduce = " << receive << endl;
+		//std::cout << "PROCESO: "<<my_context.rank << " reduce = " << receive << endl;
 		return receive;
 
 		/*//En este punto, todos han calculado su reduce parcial sin tener en cuenta init.		
