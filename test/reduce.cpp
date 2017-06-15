@@ -14,7 +14,7 @@ public:
 	int operator()(int a){
 		return a+1;
 	}
-	
+
 };
 
 
@@ -31,6 +31,6 @@ int main(int argc, char** argv){
 
 
 	auto end = chrono::system_clock::now();
-	if(!ben)dcpl::cout<<  std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count() << endl;
+	dcpl::cout<<  std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count() << endl;
 	return EXIT_SUCCESS;
 }

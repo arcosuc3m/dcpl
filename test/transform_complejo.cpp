@@ -14,7 +14,7 @@ public:
 	int operator()(int a){
 		return a+1;
 	}
-	
+
 };
 
 
@@ -25,10 +25,11 @@ int main(int argc, char** argv){
 
 	dcpl::ifstream doubles("double.data");
 	doubles.read(v, 1000000000);
-
+	auto endIt = v.begin();
+	std::advance(endIt, 100000000-1);
 	auto start = chrono::system_clock::now();
 
-	dcpl::transform(v.begin(), v.end(), v.begin(),[](double a){return a+1;});
+	dcpl::transform(v.begin(), endIt, v.begin(),[](double a){return a+1;});
 
 	auto end = chrono::system_clock::now();
 	dcpl::cout<<  std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count() << endl;

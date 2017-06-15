@@ -14,7 +14,6 @@ public:
 	int operator()(int a){
 		return a+1;
 	}
-	
 };
 
 
@@ -23,15 +22,15 @@ int main(int argc, char** argv){
 	bool ben = argc != 1;
 	dcpl::DistributedVector<double> v = ben?dcpl::DistributedVector<double>(dcpl::BENCHMARK):dcpl::DistributedVector<double> (dcpl::OPTIMIZED);
 
-	dcpl::ifstream doubles("double.data");	
-	dcpl::ifstream out("double.out");	
+	dcpl::ifstream doubles("double.data");
+	dcpl::ifstream out("double.out");
 	auto start = chrono::system_clock::now();
 
 	doubles.read(v, 1000000000);
-	out.write(v,    1000000000);	
+	out.write(v,    1000000000);
 
 
 	auto end = chrono::system_clock::now();
-	if(!ben)dcpl::cout<< std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count() << endl;
+	dcpl::cout<< std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count() << endl;
 	return EXIT_SUCCESS;
 }
